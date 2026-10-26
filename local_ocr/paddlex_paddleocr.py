@@ -4,7 +4,6 @@ import base64
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -226,6 +225,20 @@ def _recognize(source_pdf: Path, output_json: Path, *, progress_scope: str = "do
     completed = run_streamed_command(
         command, timeout=_env_int("RETAIN_LOCAL_OCR_TIMEOUT_SECONDS", 1800),
     )
+    optimized = _env("RETAIN_LOCAL_OCR_MKLDNN", "1").lower() in {"1", "true", "yes"}
+    error_tail = str(completed.stderr or "").lower()[-6000:]
+    kernel_error = (any(name in error_tail for name in ("onednn", "mkldnn"))
+                    and any(marker in error_tail for marker in ("unsupported", "unimplemented", "notimplemented", "not implemented", "kernel", "dnnl", "primitive")))
+    native_failure = completed.returncode < 0 or completed.returncode >= 0x80000000
+    if completed.returncode and optimized and (native_failure or kernel_error):
+        # Retry only a known CPU backend failure, never ordinary model/config
+        # errors. The same pixels and models are used with standard kernels.
+        print("PDFTR_OCR_PROGRESS " + json.dumps({"phase": "loading_models", "current": 0,
+              "total": 0, "scope": progress_scope, "cpu_kernel_fallback": True}), flush=True)
+        fallback_env = {**os.environ, "RETAIN_LOCAL_OCR_MKLDNN": "0"}
+        completed = run_streamed_command(
+            command, timeout=_env_int("RETAIN_LOCAL_OCR_TIMEOUT_SECONDS", 1800), env=fallback_env,
+        )
     if completed.returncode:
         raise RuntimeError(f"embedded PaddleOCR failed (exit {completed.returncode}): {completed.stderr[-4000:]}")
     if not output_json.is_file():

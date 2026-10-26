@@ -42,14 +42,14 @@ def run_streamed_command(
     next_tick = started + max(0.05, tick_interval)
     closed = 0
     def stop():
-        if process.poll() is None:
-            if grouped:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                process.kill()
+        if grouped:
+            # The leader can exit while a descendant still holds our pipes.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif process.poll() is None:
+            process.kill()
         process.wait()
     try:
         while closed < 2:
@@ -67,7 +67,7 @@ def run_streamed_command(
             if line is None:
                 closed += 1
                 continue
-            captured[name] = (captured[name] + line)[-max_capture_chars:]
+            captured[name] = (captured[name] + line)[-max_capture_chars:] if max_capture_chars > 0 else ""
             callback = on_stdout if name == "stdout" else on_stderr
             if callback is not None:
                 callback(line)

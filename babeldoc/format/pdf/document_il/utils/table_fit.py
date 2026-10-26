@@ -22,6 +22,15 @@ def isolated_table_cell_boxes(input_file, page):
         return {}
     paragraphs = [p for p in page.pdf_paragraph if p.box is not None and not getattr(p, "vertical", False)]
     result = {}
+    # Native table layouts already carry complete cell boundaries. Prefer
+    # their unique paragraph ownership over a second, ruled-lines-only scan.
+    native_cells = {layout.id: layout.box for layout in page.page_layout
+                    if layout.class_name == "table_text" and layout.box is not None
+                    and hasattr(layout, "_native_text_boxes")}
+    for layout_id, cell in native_cells.items():
+        occupants = [p for p in paragraphs if p.layout_id == layout_id]
+        if len(occupants) == 1:
+            result[id(occupants[0])] = cell
     try:
         with pymupdf.open(input_file) as document:
             source = document[int(page.page_number or 0)]
@@ -43,6 +52,8 @@ def isolated_table_cell_boxes(input_file, page):
                     if len(occupants) != 1:
                         continue
                     paragraph = occupants[0]
+                    if paragraph.layout_id in native_cells:
+                        continue
                     previous = result.get(id(paragraph))
                     area = rect.width * rect.height
                     if previous is None or area < (previous.x2 - previous.x) * (previous.y2 - previous.y):
@@ -53,7 +64,7 @@ def isolated_table_cell_boxes(input_file, page):
     return result
 
 
-def cell_layout_box(cell, units, scale, source_box=None):
+def cell_layout_box(cell, units, scale, source_box=None, centered=False):
     """Reserve actual font ascenders/descenders around the baseline-based layout."""
     extra_ascent = 0.0
     descent = 0.0
@@ -64,6 +75,6 @@ def cell_layout_box(cell, units, scale, source_box=None):
             extra_ascent = max(extra_ascent, max(0.0, float(getattr(font, "ascender", 1.0)) - 1.0) * size)
             descent = max(descent, max(0.0, -float(getattr(font, "descender", 0.0))) * size)
     padding = 0.6
-    left = max(cell.x + padding, source_box.x) if source_box is not None else cell.x + padding
+    left = max(cell.x + padding, source_box.x) if source_box is not None and not centered else cell.x + padding
     return Box(left, cell.y + padding + descent,
                cell.x2 - padding, cell.y2 - padding - extra_ascent)

@@ -20,14 +20,14 @@ def recognition_language(source_language: str) -> str:
     return aliases.get(code, code.split("-")[0])
 
 
-def create_pipeline(language: str, *, table_recognition: bool = True):
+def create_pipeline(language: str, *, table_recognition: bool = True, mkldnn: bool | None = None):
     # Import only in the isolated OCR process, never in the translation worker.
     from paddleocr import PPStructureV3
 
     return PPStructureV3(
         lang=recognition_language(language),
         device="cpu",
-        enable_mkldnn=os.environ.get("RETAIN_LOCAL_OCR_MKLDNN", "0").strip().lower() in {"1", "true", "yes"},
+        enable_mkldnn=(os.environ.get("RETAIN_LOCAL_OCR_MKLDNN", "1").strip().lower() in {"1", "true", "yes"}) if mkldnn is None else mkldnn,
         cpu_threads=max(1, int(os.environ.get("RETAIN_LOCAL_OCR_CPU_THREADS", "4"))),
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
@@ -83,7 +83,7 @@ def recognize_pdf(source: Path, language: str, *, progress_scope: str = "documen
     with pymupdf.open(source) as doc:
         total = len(doc)
         _progress("loading_models", 0, total, scope=progress_scope)
-        lazy_tables = os.environ.get("RETAIN_LOCAL_OCR_LAZY_TABLES", "1").strip().lower() not in {"0", "false", "no"}
+        lazy_tables = os.environ.get("RETAIN_LOCAL_OCR_LAZY_TABLES", "0").strip().lower() not in {"0", "false", "no"}
         tables_ready = not lazy_tables
         pipeline = create_pipeline(language, table_recognition=tables_ready)
         model_seconds = time.perf_counter() - started
@@ -129,7 +129,8 @@ def recognize_pdf(source: Path, language: str, *, progress_scope: str = "documen
             if pipeline is not None:
                 pipeline.close()
     timings = {"model_load_seconds": round(model_seconds, 3), "page_seconds": page_timings,
-               "total_seconds": round(time.perf_counter() - started, 3), "dpi": dpi, "table_models_loaded": tables_ready}
+               "total_seconds": round(time.perf_counter() - started, 3), "dpi": dpi, "table_models_loaded": tables_ready,
+               "mkldnn": os.environ.get("RETAIN_LOCAL_OCR_MKLDNN", "1").strip().lower() in {"1", "true", "yes"}}
     _progress("complete", total, total, scope=progress_scope, phase_elapsed_ms=round(timings["total_seconds"] * 1000))
     return {"layoutParsingResults": pages, "dataInfo": {"pages": metadata, "numPages": len(pages)},
             "_meta": {"local_ocr_timings": timings}}
@@ -152,7 +153,7 @@ def main() -> None:
             helper = create_predictor(model_name=model_name, device="cpu")
             helper.close()
         for language in args.languages.split(","):
-            pipeline = create_pipeline(language.strip())
+            pipeline = create_pipeline(language.strip(), mkldnn=False)
             # Execute inference during the build, not just model downloads.
             # A runtime/backend failure must fail the image build itself.
             import numpy as np

@@ -54,6 +54,54 @@ def test_timeout_retains_error_tail_and_stops_child():
     assert 'reason' in error.value.stderr
 
 
+
+@pytest.mark.parametrize("group_exists", [True, False])
+def test_timeout_cleans_group_after_leader_exits(monkeypatch, group_exists):
+    from foundation.shared import process_stream
+    released = threading.Event()
+    calls = []
+
+    class HeldPipe:
+        def readline(self):
+            assert released.wait(2), "descendant pipe was not released"
+            return ""
+        def close(self):
+            released.set()
+
+    class ExitedLeader:
+        pid = 4242
+        stdout = HeldPipe()
+        stderr = HeldPipe()
+        def poll(self):
+            return 0
+        def kill(self):
+            pytest.fail("the exited leader must not be killed individually")
+        def wait(self, **kwargs):
+            calls.append(("wait",))
+            return 0
+
+    def killpg(pid, sig):
+        calls.append(("killpg", pid, sig))
+        released.set()
+        if not group_exists:
+            raise ProcessLookupError()
+
+    def popen(command, **kwargs):
+        assert kwargs["start_new_session"] is True
+        return ExitedLeader()
+
+    monkeypatch.setattr(process_stream, "os", SimpleNamespace(name="posix", killpg=killpg))
+    monkeypatch.setattr(process_stream, "signal", SimpleNamespace(SIGKILL=9))
+    monkeypatch.setattr(process_stream, "subprocess", SimpleNamespace(
+        Popen=popen, PIPE=subprocess.PIPE, CompletedProcess=subprocess.CompletedProcess,
+        TimeoutExpired=subprocess.TimeoutExpired,
+    ))
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_streamed_command(["worker"], timeout=0.03, process_group=True)
+    assert any(call[:2] == ("killpg", 4242) for call in calls)
+    assert any(call == ("wait",) for call in calls)
+
+
 def test_tick_does_not_invent_completed_pages(monkeypatch):
     records=[]
     from services.ocr_provider import local_progress
@@ -109,10 +157,11 @@ def test_worker_uses_one_model_set_per_document_and_closes_it(monkeypatch,capsys
             return [SimpleNamespace(json={'res':{'parsing_res_list':[], 'layout_det_res':{'boxes':[]}}})]
         def close(self): self.closed=True
     pipeline=Pipeline(); created=[]
-    monkeypatch.setattr(worker,'create_pipeline',lambda lang,**kwargs:created.append(lang) or pipeline)
+    monkeypatch.delenv("RETAIN_LOCAL_OCR_LAZY_TABLES", raising=False)
+    monkeypatch.setattr(worker,'create_pipeline',lambda lang,**kwargs:created.append((lang,kwargs["table_recognition"])) or pipeline)
     result=worker.recognize_pdf(Path('input.pdf'),'en')
     frames=[json.loads(line[len(PROGRESS_PREFIX):]) for line in capsys.readouterr().out.splitlines()]
-    assert created==['en']
+    assert created==[('en',True)]
     assert pipeline.calls==2 and pipeline.closed
     assert [frame['current'] for frame in frames if frame['phase']=='page_completed']==[1,2]
     assert len(result['_meta']['local_ocr_timings']['page_seconds'])==2
@@ -130,6 +179,7 @@ def test_table_detection_uses_raw_layout_and_is_conservative():
 
 
 def test_lazy_table_page_is_rerun_with_original_full_pipeline(monkeypatch,capsys):
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_LAZY_TABLES", "1")
     spec=importlib.util.spec_from_file_location("lazy_table_worker_test",PROJECT/"local_ocr/embedded_paddleocr.py")
     worker=importlib.util.module_from_spec(spec); spec.loader.exec_module(worker)
     class Page:

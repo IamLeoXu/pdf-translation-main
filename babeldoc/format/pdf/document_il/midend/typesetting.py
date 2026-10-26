@@ -970,6 +970,10 @@ class Typesetting:
         # A table cell has its own fixed space. Fit its text independently of
         # the document-wide paragraph scale, retaining the original font ceiling.
         scale = 1.0 if cell is not None else initial_scale
+        centered_cell = (cell is not None and paragraph.layout_label == "table_text"
+                         and paragraph.box.x - cell.x > (cell.x2 - cell.x) * 0.15
+                         and abs((paragraph.box.x + paragraph.box.x2) / 2
+                                 - (cell.x + cell.x2) / 2) < (cell.x2 - cell.x) * 0.1)
         line_skip = 1.50 if self.is_cjk else 1.3
         min_scale = 0.1
         expand_space_flag = 0
@@ -978,7 +982,7 @@ class Typesetting:
         while scale >= min_scale:
             try:
                 if cell is not None:
-                    box = cell_layout_box(cell, typesetting_units, scale, paragraph.box)
+                    box = cell_layout_box(cell, typesetting_units, scale, paragraph.box, centered=centered_cell)
                 # 尝试布局排版单元
                 typeset_units, all_units_fit = self._layout_typesetting_units(
                     typesetting_units,
@@ -991,6 +995,31 @@ class Typesetting:
 
                 # 如果所有单元都放得下
                 if all_units_fit:
+                    if centered_cell:
+                        lines = []
+                        for index, unit in enumerate(typeset_units):
+                            bounds = unit.box
+                            line = next((line for line in lines
+                                         if min(line[0].y2, bounds.y2) - max(line[0].y, bounds.y)
+                                         > min(line[0].y2 - line[0].y, bounds.y2 - bounds.y) * 0.5), None)
+                            if line is None:
+                                lines.append((bounds, [index]))
+                            else:
+                                line[1].append(index)
+                        for _, indices in lines:
+                            left = min(typeset_units[i].box.x for i in indices)
+                            right = max(typeset_units[i].box.x2 for i in indices)
+                            offset = (cell.x + cell.x2 - left - right) / 2
+                            for i in indices:
+                                unit = typeset_units[i]
+                                if unit.unicode:
+                                    x, y = unit.x, unit.y
+                                else:
+                                    x, y = unit.box.x, unit.box.y
+                                    if unit.formular:
+                                        x -= unit.formular.x_offset
+                                        y -= unit.formular.y_offset
+                                typeset_units[i] = unit.relocate(x + offset, y, 1.0)
                     if apply_layout:
                         # 实际应用排版结果
                         if cell is not None:

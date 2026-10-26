@@ -37,10 +37,16 @@ def is_cid_paragraph(paragraph: il_version_1.PdfParagraph):
 
 
 def minimum_translation_length(paragraph, translation_config) -> int:
-    """Keep short table labels eligible without changing body/code policy."""
+    """Keep table and explicit field labels eligible across source languages."""
     table_labels = {"table_text", "table_cell", "wired_table_cell", "wireless_table_cell", "table_cell_hybrid"}
     if (getattr(translation_config, "enable_table_translation", False)
             and getattr(paragraph, "layout_label", None) in table_labels):
+        return 1
+    text = str(getattr(paragraph, "unicode", "") or "").strip()
+    # A short label ending in a colon is readable text, even when a wrapped
+    # heading leaves only its final word on a separate line. Bare numbers and
+    # variable-like short body fragments keep the existing minimum.
+    if text.endswith((":", "：")) and any(character.isalpha() for character in text):
         return 1
     return translation_config.min_text_length
 

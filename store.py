@@ -178,9 +178,10 @@ class TaskStore:
     def public_view(self, task_id: str) -> dict[str, Any]:
         """对外视图:脱敏(不含 inputs/openai_api_key/traceback)。"""
         with self._lock:
-            t = self._tasks.get(task_id)
-            if t is None:
+            stored_task = self._tasks.get(task_id)
+            if stored_task is None:
                 return {}
+            t = dict(stored_task)
         inputs: dict = t.get("inputs", {})
         status = str(t.get("status", "pending") or "pending")
         total_pages = int(t.get("total_pages") or 0)
@@ -194,7 +195,7 @@ class TaskStore:
                 translated_pages = min(translated_pages, total_pages)
         page_progress = round((translated_pages / total_pages) * 100, 1) if total_pages > 0 else 0.0
         progress = max(float(t.get("progress") or 0.0), page_progress)
-        retain_progress = float(t.get("retain_progress") or 0.0)
+        retain_progress = self._retain_progress_with_local_ocr(task_id, pipeline_event)
         v3_progress = float(t.get("v3_progress") or 0.0)
         progress = max(progress, retain_progress, v3_progress)
         if status == "succeeded":
@@ -246,6 +247,37 @@ class TaskStore:
             "image_reocr": inputs.get("image_reocr"),
             "has_glossary": bool(t.get("glossary_path")),
         }
+
+    def _retain_progress_with_local_ocr(
+        self, task_id: str, pipeline_event: dict[str, Any]
+    ) -> float:
+        """Map whole-document local OCR into its existing 5–25% interval."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return 0.0
+            retain_progress = float(task.get("retain_progress") or 0.0)
+            highwater = task.get("_local_ocr_progress_highwater")
+            current = pipeline_event.get("progress_current")
+            total = pipeline_event.get("progress_total")
+            if (
+                task.get("status", "pending") in {"pending", "running"}
+                and pipeline_event.get("stage") == "ocr_processing"
+                and pipeline_event.get("substage") == "local_provider"
+                and pipeline_event.get("progress_unit") == "page"
+                and current is not None
+                and total is not None
+                and total > 0
+                and 0 <= current <= total
+            ):
+                ocr_progress = 5.0 + 20.0 * current / total
+                highwater = max(float(highwater or 0.0), retain_progress, ocr_progress)
+            if highwater is not None:
+                # Coarse worker callbacks and concurrent polls may arrive late.
+                highwater = max(float(highwater), retain_progress)
+                task["_local_ocr_progress_highwater"] = highwater
+                return highwater
+            return retain_progress
 
     def delete(self, task_id: str) -> bool:
         with self._lock:

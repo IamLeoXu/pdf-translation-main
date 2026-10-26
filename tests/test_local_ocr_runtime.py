@@ -42,10 +42,12 @@ def test_local_paddle_result_keeps_layout_table_and_pixel_coordinates():
 
 
 def test_cpu_pipeline_disables_remote_and_gpu_runtime(monkeypatch):
+    monkeypatch.delenv("RETAIN_LOCAL_OCR_MKLDNN", raising=False)
     seen = {}
     monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PPStructureV3=lambda **kw: seen.update(kw)))
     embedded.create_pipeline("de")
     assert seen["device"] == "cpu"
+    assert seen["enable_mkldnn"]
     assert seen["lang"] == "de"
     assert seen["use_table_recognition"]
     assert not seen["use_formula_recognition"]
@@ -102,3 +104,60 @@ def test_local_command_error_keeps_reason_and_removes_credentials():
     detail = _command_error_detail("model download failed; secret-123", {"LLM_API_KEY": "secret-123"})
     assert "model download failed" in detail
     assert "secret-123" not in detail
+
+
+@pytest.mark.parametrize("returncode,reason", [(1,"onednn kernel unsupported"),(-11,"native error"),(3221225477,"access violation")])
+def test_cpu_kernel_failure_retries_standard_kernels_once(tmp_path, monkeypatch, returncode, reason):
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_BACKEND", "embedded")
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_PYTHON", sys.executable)
+    monkeypatch.delenv("RETAIN_LOCAL_OCR_MKLDNN", raising=False)
+    output=tmp_path/"result.json"
+    calls=[]
+    def run(command, **kwargs):
+        calls.append(kwargs)
+        if len(calls)==1:
+            return SimpleNamespace(returncode=returncode,stdout="",stderr=reason)
+        output.write_text(json.dumps({"layoutParsingResults":[]}),"utf-8")
+        return SimpleNamespace(returncode=0,stdout="",stderr="")
+    monkeypatch.setattr(wrapper,"run_streamed_command",run)
+    result,_=wrapper._recognize(tmp_path/"input.pdf",output)
+    assert len(calls)==2
+    assert calls[1]["env"]["RETAIN_LOCAL_OCR_MKLDNN"]=="0"
+    assert result=={"layoutParsingResults":[]}
+
+
+def test_regular_model_error_does_not_retry_cpu_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_BACKEND", "embedded")
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_PYTHON", sys.executable)
+    monkeypatch.delenv("RETAIN_LOCAL_OCR_MKLDNN", raising=False)
+    calls=[]
+    def run(*args,**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(returncode=1,stdout="",stderr="missing-model-file")
+    monkeypatch.setattr(wrapper,"run_streamed_command",run)
+    with pytest.raises(RuntimeError,match="missing-model-file"):
+        wrapper._recognize(tmp_path/"input.pdf",tmp_path/"result.json")
+    assert len(calls)==1
+
+
+def test_cpu_optimization_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_MKLDNN", "0")
+    seen={}
+    monkeypatch.setitem(sys.modules,"paddleocr",SimpleNamespace(PPStructureV3=lambda **kwargs:seen.update(kwargs)))
+    embedded.create_pipeline("en")
+    assert not seen["enable_mkldnn"]
+    assert seen["use_table_recognition"]
+
+
+def test_disabled_optimization_does_not_repeat_failed_process(tmp_path,monkeypatch):
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_BACKEND","embedded")
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_PYTHON",sys.executable)
+    monkeypatch.setenv("RETAIN_LOCAL_OCR_MKLDNN","0")
+    calls=[]
+    def run(*args,**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(returncode=-11,stdout="",stderr="native error")
+    monkeypatch.setattr(wrapper,"run_streamed_command",run)
+    with pytest.raises(RuntimeError,match="native error"):
+        wrapper._recognize(tmp_path/"input.pdf",tmp_path/"result.json")
+    assert len(calls)==1

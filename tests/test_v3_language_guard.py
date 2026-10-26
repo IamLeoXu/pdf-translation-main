@@ -82,8 +82,10 @@ def v3_modules(monkeypatch):
          get_paragraph_unicode=lambda para: para.unicode,
          is_same_style=lambda *a: True, is_same_style_except_font=lambda *a: True,
          is_same_style_except_size=lambda *a: True)
+    paragraph_helpers = load("native_minimum_helper", "babeldoc/format/pdf/document_il/utils/paragraph_helper.py")
     stub(utils + ".paragraph_helper", is_placeholder_only_paragraph=lambda p: False,
-         is_pure_numeric_paragraph=lambda p: False, is_cid_paragraph=lambda p: False)
+         is_pure_numeric_paragraph=lambda p: False, is_cid_paragraph=lambda p: False,
+         minimum_translation_length=paragraph_helpers.minimum_translation_length)
     stub(utils + ".style_helper", GRAY80=None)
     il = load(MIDEND + ".il_translator", "babeldoc/format/pdf/document_il/midend/il_translator.py")
     import babeldoc.format.pdf.document_il.midend as package

@@ -2,6 +2,7 @@ import logging
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -14,6 +15,13 @@ from babeldoc.format.pdf.document_il.utils.style_helper import GREEN
 from babeldoc.format.pdf.translation_config import TranslationConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NativeTableTextLayout(il_version_1.PageLayout):
+    """Cell boundaries with transient native-text ownership (not serialized)."""
+
+    __slots__ = ("_native_text_boxes",)
 
 
 class LayoutParser:
@@ -179,15 +187,26 @@ class LayoutParser:
         return docs
 
     def _add_native_table_text_layouts(self, page, source_page):
-        from babeldoc.format.pdf.document_il.utils.native_table_cells import discover_native_table_cells
+        from babeldoc.format.pdf.document_il.utils.native_table_cells import (
+            discover_native_table_cells, native_table_cell_text_boxes,
+            repair_native_table_cid_characters,
+        )
 
         regions = [layout.box for layout in page.page_layout if layout.class_name == "table" and layout.box is not None]
         cells = discover_native_table_cells(source_page, regions)
+        source_boxes = native_table_cell_text_boxes(source_page, cells)
+        repaired = repair_native_table_cid_characters(source_page, page, cells, source_boxes)
+        if repaired:
+            logger.info("Recovered native table Unicode: page=%s characters=%s", page.page_number + 1, repaired)
         next_id = max((layout.id or 0 for layout in page.page_layout), default=0) + 1
         for offset, box in enumerate(cells):
-            page.page_layout.append(il_version_1.PageLayout(
+            layout = NativeTableTextLayout(
                 id=next_id + offset, box=box, conf=1.0, class_name="table_text",
-            ))
+            )
+            # Source text can slightly overrun a border. Preserve its whole line's
+            # ownership without widening the real cell used for fitting.
+            layout._native_text_boxes = source_boxes.get(offset, [])
+            page.page_layout.append(layout)
         if cells:
             logger.info("Native table text cells: page=%s cells=%s", page.page_number + 1, len(cells))
 

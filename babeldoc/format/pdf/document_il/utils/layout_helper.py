@@ -655,6 +655,14 @@ def get_character_layout(
     _bbox_mode: Literal["auto", "visual", "box"] = "auto",
 ):
     """Get the layout for a character based on priority and IoU."""
+    # Complete native text groups have a unique cell owner, including any
+    # suffix that the original PDF drew a few points across the cell border.
+    box = char.visual_bbox.box
+    cx, cy = (box.x + box.x2) / 2, (box.y + box.y2) / 2
+    for layout in layout_map.values():
+        for source in getattr(layout, "_native_text_boxes", ()):
+            if source.x - 0.3 <= cx <= source.x2 + 0.3 and source.y - 0.3 <= cy <= source.y2 + 0.3:
+                return Layout(layout.id, layout.class_name)
     if layout_priority is None:
         layout_priority = [
             "number",
