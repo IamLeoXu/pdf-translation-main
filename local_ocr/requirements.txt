@@ -1,0 +1,7 @@
+# Isolated from the translation service to avoid Paddle/OpenCV dependency conflicts.
+paddlepaddle==3.2.2
+paddleocr[doc-parser]==3.5.0
+paddlex==3.5.0
+numpy==1.26.4
+protobuf>=3.20.2,<7
+PyMuPDF>=1.26,<1.27
