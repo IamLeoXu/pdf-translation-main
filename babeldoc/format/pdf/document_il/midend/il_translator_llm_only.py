@@ -7,6 +7,7 @@ from pathlib import Path
 from string import Template
 
 import Levenshtein
+from babeldoc.format.pdf.document_il.utils.paragraph_helper import minimum_translation_length
 import tiktoken
 from tqdm import tqdm
 
@@ -347,7 +348,7 @@ class ILTranslatorLLMOnly:
             return False
 
         # Minimum length check
-        if len(paragraph.unicode) < self.translation_config.min_text_length:
+        if len(paragraph.unicode) < minimum_translation_length(paragraph, self.translation_config):
             return False
 
         # Body text check if requested
@@ -610,7 +611,7 @@ class ILTranslatorLLMOnly:
                 continue
 
             # Check minimum length - advance progress bar if filtered out
-            if len(paragraph.unicode) < self.translation_config.min_text_length:
+            if len(paragraph.unicode) < minimum_translation_length(paragraph, self.translation_config):
                 if pbar:
                     pbar.advance(1)
                 continue

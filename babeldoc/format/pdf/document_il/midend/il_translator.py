@@ -11,6 +11,7 @@ import tiktoken
 from tqdm import tqdm
 
 import babeldoc.format.pdf.document_il.il_version_1 as il_version_1
+from babeldoc.format.pdf.document_il.utils.paragraph_helper import minimum_translation_length
 from babeldoc.babeldoc_exception.BabelDOCException import ContentFilterError
 from babeldoc.babeldoc_exception.BabelDOCException import TranslationFailedError
 from babeldoc.format.pdf.document_il import Document
@@ -1014,7 +1015,7 @@ class ILTranslator:
         # 会跌破 min_text_length 被当成"太短"跳过——译文清空。这里对已注入占位符的
         # 源豁免:长度短是 token 化假象,原文是有内容的术语,不应跳过(否则漏译)。
         has_term_tokens = bool(translate_input.glossary_term_tokens)
-        if len(text) < self.translation_config.min_text_length and not has_term_tokens:
+        if len(text) < minimum_translation_length(paragraph, self.translation_config) and not has_term_tokens:
             logger.debug(
                 f"Text too short to translate, skip. Text: {text}. Paragraph id: {paragraph.debug_id}."
             )

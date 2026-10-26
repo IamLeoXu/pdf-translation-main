@@ -218,6 +218,7 @@ class TranslationConfig:
         term_pool_max_workers: int | None = None,
         disable_same_text_fallback: bool = False,
         glossary_hard: bool = False,
+        enable_table_translation: bool = False,
     ):
         self.translator = translator
         self.term_extraction_translator = term_extraction_translator or translator
@@ -270,6 +271,7 @@ class TranslationConfig:
 
         self.report_interval = report_interval
         self.min_text_length = min_text_length
+        self.enable_table_translation = bool(enable_table_translation)
         self.use_alternating_pages_dual = use_alternating_pages_dual
         self.ocr_workaround = ocr_workaround
         self.merge_alternating_line_numbers = merge_alternating_line_numbers

@@ -36,6 +36,15 @@ def is_cid_paragraph(paragraph: il_version_1.PdfParagraph):
     return cid_count > len(chars) * 0.8
 
 
+def minimum_translation_length(paragraph, translation_config) -> int:
+    """Keep short table labels eligible without changing body/code policy."""
+    table_labels = {"table_text", "table_cell", "wired_table_cell", "wireless_table_cell", "table_cell_hybrid"}
+    if (getattr(translation_config, "enable_table_translation", False)
+            and getattr(paragraph, "layout_label", None) in table_labels):
+        return 1
+    return translation_config.min_text_length
+
+
 NUMERIC_PATTERN = re.compile(r"^-?\d+(\.\d+)?$")
 
 

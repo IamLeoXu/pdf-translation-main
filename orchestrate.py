@@ -36,6 +36,7 @@ def _build_v3_params(inputs: dict) -> TranslateParams:
         enable_json_mode_if_requested=True,
         custom_system_prompt=inputs.get("custom_system_prompt"),
         glossary_hard=bool(inputs.get("glossary_hard", False)),
+        enable_table_translation=bool(inputs.get("enable_table_translation", False)),
     )
 
 

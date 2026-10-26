@@ -173,7 +173,23 @@ class LayoutParser:
                     executor.submit(
                         self.generate_fallback_line_layout_for_page, page, progress
                     )
+        if getattr(self.translation_config, "enable_table_translation", False):
+            for page in docs.page:
+                self._add_native_table_text_layouts(page, mupdf_doc[page.page_number])
         return docs
+
+    def _add_native_table_text_layouts(self, page, source_page):
+        from babeldoc.format.pdf.document_il.utils.native_table_cells import discover_native_table_cells
+
+        regions = [layout.box for layout in page.page_layout if layout.class_name == "table" and layout.box is not None]
+        cells = discover_native_table_cells(source_page, regions)
+        next_id = max((layout.id or 0 for layout in page.page_layout), default=0) + 1
+        for offset, box in enumerate(cells):
+            page.page_layout.append(il_version_1.PageLayout(
+                id=next_id + offset, box=box, conf=1.0, class_name="table_text",
+            ))
+        if cells:
+            logger.info("Native table text cells: page=%s cells=%s", page.page_number + 1, len(cells))
 
     def generate_fallback_line_layout_for_page(self, page: il_version_1.Page, progress):
         try:
